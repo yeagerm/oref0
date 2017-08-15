@@ -78,7 +78,8 @@ smb_main() {
 
 function timerun {
     echo $@ >> /tmp/timefile.txt
-    { time $@ ; } 2>> /tmp/timefile.txt
+    { time $@ 2> /tmp/stderr ; } 2>> /tmp/timefile.txt
+    cat /tmp/stderr 1>&2
 }
 
 function smb_reservoir_before {
