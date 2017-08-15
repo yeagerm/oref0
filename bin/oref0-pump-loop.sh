@@ -78,7 +78,7 @@ smb_main() {
 
 function timerun {
     echo $1 >> /tmp/timefile.txt
-    { time $1 } 2>> /tmp/timefile.txt
+    { time $1 ; } 2>> /tmp/timefile.txt
 }
 
 function smb_reservoir_before {
