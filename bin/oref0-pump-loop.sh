@@ -76,11 +76,16 @@ smb_main() {
     fi
 }
 
+function timerun {
+    echo $1 >> /tmp/timefile.txt
+    { time $1 } 2>> /tmp/timefile.txt
+}
+
 function smb_reservoir_before {
     # Refresh reservoir.json and pumphistory.json
     gather \
     && cp monitor/reservoir.json monitor/lastreservoir.json \
-    && openaps report invoke monitor/clock.json monitor/clock-zoned.json 2>&1 >/dev/null | tail -1 \
+    && timerun openaps report invoke monitor/clock.json monitor/clock-zoned.json 2>&1 >/dev/null | tail -1 \
     && echo -n "Checking pump clock: " && (cat monitor/clock-zoned.json; echo) | tr -d '\n' \
     && echo -n " is within 1m of current time: " && date \
     && if (( $(bc <<< "$(date +%s -d $(cat monitor/clock-zoned.json | sed 's/"//g')) - $(date +%s)") < -60 )) || (( $(bc <<< "$(date +%s -d $(cat monitor/clock-zoned.json | sed 's/"//g')) - $(date +%s)") > 60 )); then
@@ -129,8 +134,8 @@ function smb_suggest {
     rm -rf enact/smb-suggested.json
     ls enact/smb-suggested.json 2>/dev/null >/dev/null && die "enact/suggested.json present"
     # Run determine-basal
-    echo -n Temp refresh && openaps report invoke monitor/temp_basal.json monitor/clock.json monitor/clock-zoned.json monitor/iob.json 2>&1 >/dev/null | tail -1 && echo ed \
-    && openaps report invoke enact/smb-suggested.json 2>&1 >/dev/null \
+    echo -n Temp refresh && timerun openaps report invoke monitor/temp_basal.json monitor/clock.json monitor/clock-zoned.json monitor/iob.json 2>&1 >/dev/null | tail -1 && echo ed \
+    && timerun openaps report invoke enact/smb-suggested.json 2>&1 >/dev/null \
     && cp -up enact/smb-suggested.json enact/suggested.json \
     && smb_verify_suggested
 }
@@ -140,8 +145,8 @@ function smb_enact_temp {
     smb_suggest \
     && if ( echo -n "enact/smb-suggested.json: " && cat enact/smb-suggested.json | jq -C -c . && grep -q duration enact/smb-suggested.json && ! smb_verify_enacted ); then (
         rm enact/smb-enacted.json
-        openaps report invoke enact/smb-enacted.json 2>&1 >/dev/null | tail -1
-        grep -q duration enact/smb-enacted.json || openaps invoke enact/smb-enacted.json 2>&1 >/dev/null | tail -1
+        timerun openaps report invoke enact/smb-enacted.json 2>&1 >/dev/null | tail -1
+        grep -q duration enact/smb-enacted.json || timerun openaps invoke enact/smb-enacted.json 2>&1 >/dev/null | tail -1
         cp -up enact/smb-enacted.json enact/enacted.json
         echo -n "enact/smb-enacted.json: " && cat enact/smb-enacted.json | jq -C -c .
         ) 2>&1 | egrep -v "^  |subg_rfspy|handler"
@@ -156,7 +161,7 @@ function smb_verify_enacted {
     # verify rate matches (within 0.03U/hr) and duration is no shorter than 5m less than smb-suggested.json
     rm -rf monitor/temp_basal.json
     ( echo -n Temp refresh \
-        && ( openaps report invoke monitor/temp_basal.json || openaps report invoke monitor/temp_basal.json ) \
+        && ( timerun openaps report invoke monitor/temp_basal.json || timerun openaps report invoke monitor/temp_basal.json ) \
         2>&1 >/dev/null | tail -1 && echo -n "ed: " \
     ) && echo -n "monitor/temp_basal.json: " && cat monitor/temp_basal.json | jq -C -c . \
     && jq --slurp --exit-status 'if .[1].rate then (.[0].rate > .[1].rate - 0.03 and .[0].rate < .[1].rate + 0.03 and .[0].duration > .[1].duration - 5) else true end' monitor/temp_basal.json enact/smb-suggested.json > /dev/null
@@ -166,7 +171,7 @@ function smb_verify_reservoir {
     # Read the pump reservoir volume and verify it is within 0.1U of the expected volume
     rm -rf monitor/reservoir.json
     echo -n "Checking reservoir: " \
-    && (openaps invoke monitor/reservoir.json || openaps invoke monitor/reservoir.json) 2>&1 >/dev/null | tail -1 \
+    && (timerun openaps invoke monitor/reservoir.json || timerun openaps invoke monitor/reservoir.json) 2>&1 >/dev/null | tail -1 \
     && echo -n "reservoir level before: " \
     && cat monitor/lastreservoir.json \
     && echo -n ", suggested: " \
@@ -196,7 +201,7 @@ function smb_verify_status {
     # Read the pump status and verify it is not bolusing
     rm -rf monitor/status.json
     echo -n "Checking pump status (suspended/bolusing): "
-    ( openaps invoke monitor/status.json || openaps invoke monitor/status.json ) 2>&1 >/dev/null | tail -1 \
+    ( timerun openaps invoke monitor/status.json || timerun openaps invoke monitor/status.json ) 2>&1 >/dev/null | tail -1 \
     && cat monitor/status.json | jq -C -c . \
     && grep -q '"status": "normal"' monitor/status.json \
     && grep -q '"bolusing": false' monitor/status.json \
@@ -212,7 +217,7 @@ function smb_bolus {
     # and administer the supermicrobolus
     find enact/ -mmin -5 | grep smb-suggested.json \
     && if (grep -q '"units":' enact/smb-suggested.json); then
-        openaps report invoke enact/bolused.json 2>&1 >/dev/null | tail -1 \
+        timerun openaps report invoke enact/bolused.json 2>&1 >/dev/null | tail -1 \
         && echo -n "enact/bolused.json: " && cat enact/bolused.json | jq -C -c . \
         && rm -rf enact/smb-suggested.json
     else
@@ -224,7 +229,7 @@ function unsuspend_if_no_temp {
     if (cat monitor/temp_basal.json | json -c "this.duration == 0" | grep -q duration); then
         if (grep -iq '"unsuspend_if_no_temp": true' preferences.json); then
             echo Temp basal has ended: unsuspending pump
-            openaps use pump resume_pump
+            timerun openaps use pump resume_pump
         else
             echo unsuspend_if_no_temp not enabled in preferences.json: leaving pump suspended
         fi
@@ -258,7 +263,7 @@ function if_mdt_get_bg {
         #"decocare.errors.DataTransferCorruptionError: Page size too short"
         n=0
         until [ $n -ge 3 ]; do
-            openaps report invoke monitor/cgm-mm-glucosedirty.json 2>&1 >/dev/null && break
+            timerun openaps report invoke monitor/cgm-mm-glucosedirty.json 2>&1 >/dev/null && break
             echo
             echo CGM data retrieval from pump disrupted, retrying in 5 seconds...
             n=$[$n+1]
@@ -294,7 +299,7 @@ function wait_for_mdt_get_bg {
         echo "Last CGM Time was $(date -d $(jq .[1].date monitor/cgm-mm-glucosedirty.json| tr -d '"') +"%r") wait untill $(date --date="@$(($(date #-d $(jq .[1].date monitor/cgm-mm-glucosedirty.json| tr -d '"') +%s) + 300))" +"%r")to continue"
         echo "waiting for $CGMDIFFTIME seconds before continuing"
         sleep $CGMDIFFTIME
-        until openaps report invoke monitor/cgm-mm-glucosedirty.json 2>&1 >/dev/null; do
+        until timerun openaps report invoke monitor/cgm-mm-glucosedirty.json 2>&1 >/dev/null; do
             echo cgm data from pump disrupted, retrying in 5 seconds...
             sleep 5;
             echo -n MDT cgm data retrieve
@@ -302,22 +307,22 @@ function wait_for_mdt_get_bg {
     done
 }
 function mdt_get_bg {
-    openaps report invoke monitor/cgm-mm-glucosetrend.json 2>&1 >/dev/null \
-    && openaps report invoke cgm/cgm-glucose.json 2>&1 >/dev/null \
+    timerun openaps report invoke monitor/cgm-mm-glucosetrend.json 2>&1 >/dev/null \
+    && timerun openaps report invoke cgm/cgm-glucose.json 2>&1 >/dev/null \
     && grep -q glucose cgm/cgm-glucose.json \
     && echo MDT CGM data retrieved \
     && cp -pu cgm/cgm-glucose.json cgm/glucose.json \
     && cp -pu cgm/glucose.json monitor/glucose-unzoned.json \
     && echo -n MDT New cgm data reformat \
-    && openaps report invoke monitor/glucose.json 2>&1 >/dev/null \
-    && openaps report invoke nightscout/glucose.json 2>&1 >/dev/null \
+    && timerun openaps report invoke monitor/glucose.json 2>&1 >/dev/null \
+    && timerun openaps report invoke nightscout/glucose.json 2>&1 >/dev/null \
     && echo ted
 }
 # make sure we can talk to the pump and get a valid model number
 function preflight {
     echo -n "Preflight "
     # only 515, 522, 523, 715, 722, 723, 554, and 754 pump models have been tested with SMB
-    ( openaps report invoke settings/model.json || openaps report invoke settings/model.json ) 2>&1 >/dev/null | tail -1 \
+    ( timerun openaps report invoke settings/model.json || timerun openaps report invoke settings/model.json ) 2>&1 >/dev/null | tail -1 \
     && egrep -q "[57](15|22|23|54)" settings/model.json \
     && echo -n "OK. " \
     || ( echo -n "fail. "; false )
@@ -337,7 +342,7 @@ function mmtune {
         && break
     done
     echo {} > monitor/mmtune.json
-    echo -n "mmtune: " && openaps report invoke monitor/mmtune.json 2>&1 >/dev/null | tail -1
+    echo -n "mmtune: " && timerun openaps report invoke monitor/mmtune.json 2>&1 >/dev/null | tail -1
     grep -v setFreq monitor/mmtune.json | grep -A2 $(json -a setFreq -f monitor/mmtune.json) | while read line
         do echo -n "$line "
     done
@@ -385,15 +390,15 @@ function wait_for_silence {
 
 # Refresh pumphistory etc.
 function gather {
-    openaps report invoke monitor/status.json 2>&1 >/dev/null | tail -1 \
+    timerun openaps report invoke monitor/status.json 2>&1 >/dev/null | tail -1 \
     && echo -n Ref \
     && test $(cat monitor/status.json | json bolusing) == false \
     && echo -n resh \
-    && ( openaps monitor-pump || openaps monitor-pump ) 2>&1 >/dev/null | tail -1 \
+    && ( timerun openaps monitor-pump || timerun openaps monitor-pump ) 2>&1 >/dev/null | tail -1 \
     && echo -n ed \
     && merge_pumphistory \
     && echo -n " pumphistory" \
-    && openaps report invoke monitor/meal.json 2>&1 >/dev/null | tail -1 \
+    && timerun openaps report invoke monitor/meal.json 2>&1 >/dev/null | tail -1 \
     && echo " and meal.json" \
     || (echo; exit 1) 2>/dev/null
 }
@@ -405,11 +410,11 @@ function merge_pumphistory {
 # Calculate new suggested temp basal and enact it
 function enact {
     rm enact/suggested.json
-    openaps report invoke enact/suggested.json \
+    timerun openaps report invoke enact/suggested.json \
     && if (cat enact/suggested.json && grep -q duration enact/suggested.json); then (
         rm enact/enacted.json
-        openaps report invoke enact/enacted.json 2>&1 >/dev/null | tail -1
-        grep -q duration enact/enacted.json || openaps invoke enact/enacted.json ) 2>&1 | egrep -v "^  |subg_rfspy|handler"
+        timerun openaps report invoke enact/enacted.json 2>&1 >/dev/null | tail -1
+        grep -q duration enact/enacted.json || timerun openaps invoke enact/enacted.json ) 2>&1 | egrep -v "^  |subg_rfspy|handler"
     fi
     grep incorrectly enact/suggested.json && oref0-set-system-clock 2>/dev/null
     echo -n "enact/enacted.json: " && cat enact/enacted.json | jq -C -c .
@@ -432,13 +437,13 @@ function refresh_old_pumphistory_24h {
     find settings/ -mmin -120 -size +100c | grep -q pumphistory-24h-zoned \
     || ( echo -n "Old pumphistory-24h, waiting for $upto30s seconds of silence: " && wait_for_silence $upto30 \
         && echo -n Old pumphistory-24h refresh \
-        && openaps report invoke settings/pumphistory-24h.json settings/pumphistory-24h-zoned.json 2>&1 >/dev/null | tail -1 && echo ed )
+        && timerun openaps report invoke settings/pumphistory-24h.json settings/pumphistory-24h-zoned.json 2>&1 >/dev/null | tail -1 && echo ed )
 }
 
 # refresh settings/profile if it's more than 1h old
 function refresh_old_profile {
     find settings/ -mmin -60 -size +5c | grep -q settings/profile.json && echo -n "Profile less than 60m old. " \
-    || (echo -n Old settings refresh && openaps get-settings 2>&1 >/dev/null | tail -1 && echo -n "ed. " )
+    || (echo -n Old settings refresh && timerun openaps get-settings 2>&1 >/dev/null | tail -1 && echo -n "ed. " )
 }
 
 function refresh_smb_temp_and_enact {
@@ -461,7 +466,7 @@ function refresh_temp_and_enact {
     # TODO: use pump_loop_completed logic as in refresh_smb_temp_and_enact
     if( (find monitor/ -newer monitor/temp_basal.json | grep -q glucose.json && echo -n "glucose.json newer than temp_basal.json. " ) \
         || (! find monitor/ -mmin -5 -size +5c | grep -q temp_basal && echo "temp_basal.json more than 5m old. ")); then
-            (echo -n Temp refresh && openaps report invoke monitor/temp_basal.json monitor/clock.json monitor/clock-zoned.json monitor/iob.json 2>&1 >/dev/null | tail -1 && echo ed \
+            (echo -n Temp refresh && timerun openaps report invoke monitor/temp_basal.json monitor/clock.json monitor/clock-zoned.json monitor/iob.json 2>&1 >/dev/null | tail -1 && echo ed \
             && if (cat monitor/temp_basal.json | json -c "this.duration < 27" | grep -q duration); then
                 enact; else echo Temp duration 27m or more
             fi)
@@ -484,7 +489,7 @@ function refresh_pumphistory_and_enact {
 
 function refresh_profile {
     find settings/ -mmin -10 -size +5c | grep -q settings.json && echo Settings less than 10m old \
-    || (echo -n Settings refresh && openaps get-settings 2>/dev/null >/dev/null && echo ed)
+    || (echo -n Settings refresh && timerun openaps get-settings 2>/dev/null >/dev/null && echo ed)
 }
 
 function low_battery_wait {
@@ -536,7 +541,7 @@ function refresh_pumphistory_24h {
     fi
     find settings/ -mmin -$autosens_freq -size +100c | grep -q pumphistory-24h-zoned && echo "Pumphistory-24 < ${autosens_freq}m old" \
     || (echo -n pumphistory-24h refresh \
-        && openaps report invoke settings/pumphistory-24h.json settings/pumphistory-24h-zoned.json 2>&1 >/dev/null | tail -1 && echo ed)
+        && timerun openaps report invoke settings/pumphistory-24h.json settings/pumphistory-24h-zoned.json 2>&1 >/dev/null | tail -1 && echo ed)
 }
 
 function setglucosetimestamp {
