@@ -39,6 +39,7 @@ smb_main() {
         echo && echo Starting supermicrobolus pump-loop at $(date) with $upto30s second wait_for_silence: \
         && wait_for_bg \
         && wait_for_silence $upto30s \
+        && echo "$(date): starting preflight" >> /tmp/timefile.txt \
         && ( preflight || preflight ) \
         && if_mdt_get_bg \
         && refresh_old_pumphistory_24h \
@@ -74,6 +75,7 @@ smb_main() {
         maybe_mmtune
         echo Unsuccessful supermicrobolus pump-loop at $(date)
     fi
+    echo "$(date): loop finished" >> /tmp/timefile.txt
 }
 
 function timerun {
