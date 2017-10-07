@@ -3,77 +3,81 @@
 # main pump-loop
 main() {
     prep
-    until( \
-        echo && echo Starting pump-loop at $(date): \
-        && wait_for_bg \
-        && wait_for_silence \
-        && if_mdt_get_bg \
-        && refresh_old_pumphistory_enact \
-        && refresh_old_pumphistory_24h \
-        && refresh_old_profile \
-        && touch monitor/pump_loop_enacted -r monitor/glucose.json \
-        && ( refresh_temp_and_enact || ( smb_verify_status && refresh_temp_and_enact ) ) \
-        && refresh_pumphistory_and_enact \
-        && refresh_profile \
-        && refresh_pumphistory_24h \
-        && echo Completed pump-loop at $(date) \
-        && touch monitor/pump_loop_completed -r monitor/pump_loop_enacted \
-        && echo); do
+    if ! overtemp; then
+        until( \
+            echo && echo Starting pump-loop at $(date): \
+            && wait_for_bg \
+            && wait_for_silence \
+            && if_mdt_get_bg \
+            && refresh_old_pumphistory_enact \
+            && refresh_old_pumphistory_24h \
+            && refresh_old_profile \
+            && touch /tmp/pump_loop_enacted -r monitor/glucose.json \
+            && ( refresh_temp_and_enact || ( smb_verify_status && refresh_temp_and_enact ) ) \
+            && refresh_pumphistory_and_enact \
+            && refresh_profile \
+            && refresh_pumphistory_24h \
+            && echo Completed pump-loop at $(date) \
+            && touch /tmp/pump_loop_completed -r /tmp/pump_loop_enacted \
+            && echo); do
 
-            if grep -q "percent" monitor/temp_basal.json; then
-                echo "Pssst! Your pump is set to % basal type. The pump won’t accept temporary basal rates in this mode. Change it to absolute u/hr, and temporary basal rates will then be able to be set."
-            fi
-            # On a random subset of failures, mmtune
-            echo Error, retrying \
-            && maybe_mmtune
-            sleep 5
-    done
+                if grep -q "percent" monitor/temp_basal.json; then
+                    echo "Pssst! Your pump is set to % basal type. The pump won’t accept temporary basal rates in this mode. Change it to absolute u/hr, and temporary basal rates will then be able to be set."
+                fi
+                # On a random subset of failures, mmtune
+                echo Error, retrying \
+                && maybe_mmtune
+                sleep 5
+        done
+    fi
 }
 
 # main supermicrobolus loop
 smb_main() {
     prep
-    if ! ( \
-        prep
-        # checking to see if the log reports out that it is on % basal type, which blocks remote temps being set
-        echo && echo Starting supermicrobolus pump-loop at $(date) with $upto30s second wait_for_silence: \
-        && wait_for_bg \
-        && wait_for_silence $upto30s \
-        && echo "$(date): starting preflight" >> /tmp/timefile.txt \
-        && ( preflight || preflight ) \
-        && if_mdt_get_bg \
-        && refresh_old_pumphistory_24h \
-        && refresh_old_pumphistory \
-        && refresh_old_profile \
-        && touch monitor/pump_loop_enacted -r monitor/glucose.json \
-        && refresh_smb_temp_and_enact \
-        && ( smb_check_everything \
-            && if (grep -q '"units":' enact/smb-suggested.json); then
-                ( smb_bolus && \
-                    touch monitor/pump_loop_completed -r monitor/pump_loop_enacted \
+    if ! overtemp; then
+        if ! ( \
+            prep
+            # checking to see if the log reports out that it is on % basal type, which blocks remote temps being set
+            echo && echo Starting supermicrobolus pump-loop at $(date) with $upto30s second wait_for_silence: \
+            && wait_for_bg \
+            && wait_for_silence $upto30s \
+            && ( preflight || preflight ) \
+            && if_mdt_get_bg \
+            && refresh_old_pumphistory_24h \
+            && refresh_old_pumphistory \
+            && refresh_old_profile \
+            && touch /tmp/pump_loop_enacted -r monitor/glucose.json \
+            && refresh_smb_temp_and_enact \
+            && ( smb_check_everything \
+                && if (grep -q '"units":' enact/smb-suggested.json); then
+                    ( smb_bolus && \
+                        touch /tmp/pump_loop_completed -r /tmp/pump_loop_enacted \
+                    ) \
+                    || ( smb_old_temp && ( \
+                        echo "Falling back to normal pump-loop" \
+                        && refresh_temp_and_enact \
+                        && refresh_pumphistory_and_enact \
+                        && refresh_profile \
+                        && refresh_pumphistory_24h \
+                        && echo Completed pump-loop at $(date) \
+                        && echo \
+                        ))
+                fi
                 ) \
-                || ( smb_old_temp && ( \
-                    echo "Falling back to normal pump-loop" \
-                    && refresh_temp_and_enact \
-                    && refresh_pumphistory_and_enact \
-                    && refresh_profile \
-                    && refresh_pumphistory_24h \
-                    && echo Completed pump-loop at $(date) \
-                    && echo \
-                    ))
+                && ( refresh_profile 15; refresh_pumphistory_24h; true ) \
+                && refresh_after_bolus_or_enact \
+                && echo Completed supermicrobolus pump-loop at $(date): \
+                && touch /tmp/pump_loop_completed -r /tmp/pump_loop_enacted \
+                && echo \
+        ); then
+            echo -n "SMB pump-loop failed. "
+            if grep -q "percent" monitor/temp_basal.json; then
+                echo "Pssst! Your pump is set to % basal type. The pump won’t accept temporary basal rates in this mode. Change it to absolute u/hr, and temporary basal rates will then be able to be set."
             fi
-            ) \
-            && ( refresh_profile; refresh_pumphistory_24h; true ) \
-            && echo Completed supermicrobolus pump-loop at $(date): \
-            && touch monitor/pump_loop_completed -r monitor/pump_loop_enacted \
-            && echo \
-    ); then
-        echo -n "SMB pump-loop failed. "
-        if grep -q "percent" monitor/temp_basal.json; then
-            echo "Pssst! Your pump is set to % basal type. The pump won’t accept temporary basal rates in this mode. Change it to absolute u/hr, and temporary basal rates will then be able to be set."
+            maybe_mmtune
+            echo Unsuccessful supermicrobolus pump-loop at $(date)
         fi
-        maybe_mmtune
-        echo Unsuccessful supermicrobolus pump-loop at $(date)
     fi
     echo "$(date): loop finished" >> /tmp/timefile.txt
 }
@@ -85,6 +89,12 @@ function timerun {
     cat /tmp/stderr 1>&2
 }
 
+function overtemp {
+    # check for CPU temperature above 85°C
+    sensors -u 2>/dev/null | awk '$NF > 85' | grep input \
+    && echo Rig is too hot: not running pump-loop at $(date)\
+    && echo Please ensure rig is properly ventilated
+}
 function smb_reservoir_before {
     # Refresh reservoir.json and pumphistory.json
     gather \
@@ -118,6 +128,7 @@ function smb_check_everything {
     && smb_enact_temp \
     && if (grep -q '"units":' enact/smb-suggested.json); then
         ( smb_verify_suggested || smb_suggest ) \
+        && echo -n "Listening for $upto10s s silence: " && wait_for_silence $upto10s \
         && smb_verify_reservoir \
         && smb_verify_status \
         || ( echo Retrying SMB checks
@@ -152,7 +163,7 @@ function smb_enact_temp {
         timerun openaps report invoke enact/smb-enacted.json 2>&1 >/dev/null | tail -1
         grep -q duration enact/smb-enacted.json || timerun openaps invoke enact/smb-enacted.json 2>&1 >/dev/null | tail -1
         cp -up enact/smb-enacted.json enact/enacted.json
-        echo -n "enact/smb-enacted.json: " && cat enact/smb-enacted.json | jq -C -c .
+        echo -n "enact/smb-enacted.json: " && cat enact/smb-enacted.json | jq -C -c '. | "Rate: \(.rate) Duration: \(.duration)"'
         ) 2>&1 | egrep -v "^  |subg_rfspy|handler"
     else
         echo -n "No smb_enact needed. "
@@ -213,13 +224,14 @@ function smb_verify_status {
         echo -n "Pump suspended; "
         unsuspend_if_no_temp
         gather
+        false
     fi
 }
 
 function smb_bolus {
     # Verify that the suggested.json is less than 5 minutes old
     # and administer the supermicrobolus
-    find enact/ -mmin -5 | grep smb-suggested.json \
+    find enact/ -mmin -5 | grep smb-suggested.json > /dev/null \
     && if (grep -q '"units":' enact/smb-suggested.json); then
         timerun openaps report invoke enact/bolused.json 2>&1 >/dev/null | tail -1 \
         && echo -n "enact/bolused.json: " && cat enact/bolused.json | jq -C -c . \
@@ -228,6 +240,20 @@ function smb_bolus {
         echo "No bolus needed (yet)"
     fi
 }
+
+function refresh_after_bolus_or_enact {
+    if (find enact/ -mmin -2 -size +5c | grep -q bolused.json || (cat monitor/temp_basal.json | json -c "this.duration > 28" | grep -q duration)); then
+        # refresh profile if >5m old to give SMB a chance to deliver
+        refresh_profile 3
+        gather || ( wait_for_silence 10 && gather ) || ( wait_for_silence 20 && gather )
+        openaps report invoke monitor/iob.json enact/smb-suggested.json 2>/dev/null >/dev/null \
+        && cp -up enact/smb-suggested.json enact/suggested.json \
+        && echo -n "IOB: " && cat enact/smb-suggested.json | jq .IOB
+        true
+    fi
+
+}
+
 function unsuspend_if_no_temp {
     # If temp basal duration is zero, unsuspend pump
     if (cat monitor/temp_basal.json | json -c "this.duration == 0" | grep -q duration); then
@@ -326,8 +352,8 @@ function mdt_get_bg {
 function preflight {
     echo -n "Preflight "
     # only 515, 522, 523, 715, 722, 723, 554, and 754 pump models have been tested with SMB
-    ( timerun openaps report invoke settings/model.json || timerun openaps report invoke settings/model.json ) 2>&1 >/dev/null | tail -1 \
-    && egrep -q "[57](15|22|23|54)" settings/model.json \
+    ( openaps report invoke settings/model.json || openaps report invoke settings/model.json ) 2>&1 >/dev/null | tail -1 \
+    && ( egrep -q "[57](15|22|23|54)" settings/model.json || (grep 12 settings/model.json && echo -n "error: pump model untested with SMB: "; false) ) \
     && echo -n "OK. " \
     || ( echo -n "fail. "; false )
 }
@@ -339,10 +365,10 @@ function mmtune {
         reset_spi_serial.py 2>/dev/null
     fi
     oref0_init_pump_comms.py
-    echo -n "Listening for 30s silence before mmtuning: "
+    echo -n "Listening for 40s silence before mmtuning: "
     for i in $(seq 1 800); do
         echo -n .
-        any_pump_comms 30 2>/dev/null | egrep -v subg | egrep No \
+        any_pump_comms 40 2>/dev/null | egrep -v subg | egrep No \
         && break
     done
     echo {} > monitor/mmtune.json
@@ -359,10 +385,17 @@ function mmtune {
 }
 
 function maybe_mmtune {
-    # mmtune 30% of the time
-    [[ $(( ( RANDOM % 100 ) )) > 70 ]] \
-    && echo "mmtuning" \
-    && mmtune
+    if ( find /tmp/ -mmin -15 | egrep -q "pump_loop_completed" ); then
+        # mmtune ~ 25% of the time
+        [[ $(( ( RANDOM % 100 ) )) > 75 ]] \
+        && echo "Waiting for 40s silence before mmtuning" \
+        && wait_for_silence 40 \
+        && mmtune
+    else
+        echo "pump_loop_completed more than 15m old; waiting for 40s silence before mmtuning"
+        wait_for_silence 40
+        mmtune
+    fi
 }
 
 function any_pump_comms {
@@ -372,7 +405,7 @@ function any_pump_comms {
 # listen for $1 seconds of silence (no other rigs talking to pump) before continuing
 function wait_for_silence {
     if [ -z $1 ]; then
-        waitfor=30
+        waitfor=40
     else
         waitfor=$1
     fi
@@ -396,7 +429,9 @@ function wait_for_silence {
 function gather {
     timerun openaps report invoke monitor/status.json 2>&1 >/dev/null | tail -1 \
     && echo -n Ref \
-    && test $(cat monitor/status.json | json bolusing) == false \
+    && ( grep -q "model.*12" monitor/status.json || \
+         test $(cat monitor/status.json | json suspended) == true || \
+         test $(cat monitor/status.json | json bolusing) == false ) \
     && echo -n resh \
     && ( timerun openaps monitor-pump || timerun openaps monitor-pump ) 2>&1 >/dev/null | tail -1 \
     && echo -n ed \
@@ -430,9 +465,9 @@ function refresh_old_pumphistory_enact {
     || ( echo -n "Old pumphistory: " && gather && enact )
 }
 
-# refresh pumphistory if it's more than 15m old, but don't enact
+# refresh pumphistory if it's more than 30m old, but don't enact
 function refresh_old_pumphistory {
-    find monitor/ -mmin -15 -size +100c | grep -q pumphistory-zoned \
+    find monitor/ -mmin -30 -size +100c | grep -q pumphistory-zoned \
     || ( echo -n "Old pumphistory, waiting for $upto30s seconds of silence: " && wait_for_silence $upto30s && gather )
 }
 
@@ -453,14 +488,15 @@ function refresh_old_profile {
 function refresh_smb_temp_and_enact {
     # set mtime of monitor/glucose.json to the time of its most recent glucose value
     setglucosetimestamp
-    if ( find monitor/ -newer monitor/pump_loop_completed | grep -q glucose.json ); then
-        echo "glucose.json newer than pump_loop_completed. "
-        smb_enact_temp
-    elif ( find monitor/ -mmin -5 -size +5c | grep -q monitor/pump_loop_completed ); then
-        echo "pump_loop_completed more than 5m ago. "
+    # only smb_enact_temp if we haven't successfully completed a pump_loop recently
+    # (no point in enacting a temp that's going to get changed after we see our last SMB)
+    if (cat monitor/temp_basal.json | json -c "this.duration > 20" | grep -q duration); then
+        echo -n "Temp duration >20m. "
+    elif ( find /tmp/ -mmin +10 | grep -q /tmp/pump_loop_completed ); then
+        echo "pump_loop_completed more than 10m ago: setting temp before refreshing pumphistory. "
         smb_enact_temp
     else
-        echo -n "pump_loop_completed less than 5m ago. "
+        echo -n "pump_loop_completed less than 10m ago. "
     fi
 }
 
@@ -484,7 +520,7 @@ function refresh_pumphistory_and_enact {
     setglucosetimestamp
     if ((find monitor/ -newer monitor/pumphistory-zoned.json | grep -q glucose.json && echo -n "glucose.json newer than pumphistory. ") \
         || (find enact/ -newer monitor/pumphistory-zoned.json | grep -q enacted.json && echo -n "enacted.json newer than pumphistory. ") \
-        || (! find monitor/ -mmin -5 | grep -q pumphistory-zoned && echo -n "pumphistory more than 5m old. ") ); then
+        || ((! find monitor/ -mmin -5 | grep -q pumphistory-zoned || ! find monitor/ -mmin +0 | grep -q pumphistory-zoned) && echo -n "pumphistory more than 5m old. ") ); then
             (echo -n ": " && gather && enact )
     else
         echo Pumphistory less than 5m old
@@ -492,21 +528,13 @@ function refresh_pumphistory_and_enact {
 }
 
 function refresh_profile {
-    find settings/ -mmin -10 -size +5c | grep -q settings.json && echo Settings less than 10m old \
-    || (echo -n Settings refresh && timerun openaps get-settings 2>/dev/null >/dev/null && echo ed)
-}
-
-function low_battery_wait {
-    if (! ls monitor/edison-battery.json 2>/dev/null >/dev/null); then
-        echo Edison battery level not found
-    elif (jq --exit-status ".battery >= 98 or (.battery <= 65 and .battery >= 60)" monitor/edison-battery.json > /dev/null); then
-        echo "Edison battery at $(jq .battery monitor/edison-battery.json)% is charged (>= 98%) or likely charging (60-65%)"
-    elif (jq --exit-status ".battery < 98" monitor/edison-battery.json > /dev/null); then
-        echo -n "Edison on battery: $(jq .battery monitor/edison-battery.json)%; "
-        wait_for_bg
+    if [ -z $1 ]; then
+        profileage=10
     else
-        echo Edison battery level unknown
+        profileage=$1
     fi
+    find settings/ -mmin -$profileage -size +5c | grep -q settings.json && echo -n "Settings less than $profileage minutes old. " \
+    || (echo -n Settings refresh && openaps get-settings 2>/dev/null >/dev/null && echo -n "ed. ")
 }
 
 function wait_for_bg {
@@ -517,9 +545,9 @@ function wait_for_bg {
         for i in `seq 1 24`; do
             # set mtime of monitor/glucose.json to the time of its most recent glucose value
             touch -d "$(date -R -d @$(jq .[0].date/1000 monitor/glucose.json))" monitor/glucose.json
-            if (! ls monitor/pump_loop_completed >/dev/null ); then
+            if (! ls /tmp/pump_loop_completed >/dev/null ); then
                 break
-            elif (find monitor/ -newer monitor/pump_loop_completed | grep -q glucose.json); then
+            elif (find monitor/ -newer /tmp/pump_loop_completed | grep -q glucose.json); then
                 echo glucose.json newer than pump_loop_completed
                 break
             else
@@ -532,16 +560,16 @@ function wait_for_bg {
 function refresh_pumphistory_24h {
     if (! ls monitor/edison-battery.json 2>/dev/null >/dev/null); then
         echo -n "Edison battery level not found. "
-        autosens_freq=20
-    elif (jq --exit-status ".battery >= 98 or (.battery <= 65 and .battery >= 60)" monitor/edison-battery.json > /dev/null); then
-        echo -n "Edison battery at $(jq .battery monitor/edison-battery.json)% is charged (>= 98%) or likely charging (60-65%). "
-        autosens_freq=20
+        autosens_freq=15
+    elif (jq --exit-status ".battery >= 98 or (.battery <= 70 and .battery >= 60)" monitor/edison-battery.json > /dev/null); then
+        echo -n "Edison battery at $(jq .battery monitor/edison-battery.json)% is charged (>= 98%) or likely charging (60-70%). "
+        autosens_freq=15
     elif (jq --exit-status ".battery < 98" monitor/edison-battery.json > /dev/null); then
         echo -n "Edison on battery: $(jq .battery monitor/edison-battery.json)%. "
-        autosens_freq=90
+        autosens_freq=30
     else
         echo -n "Edison battery level unknown. "
-        autosens_freq=20
+        autosens_freq=15
     fi
     find settings/ -mmin -$autosens_freq -size +100c | grep -q pumphistory-24h-zoned && echo "Pumphistory-24 < ${autosens_freq}m old" \
     || (echo -n pumphistory-24h refresh \
