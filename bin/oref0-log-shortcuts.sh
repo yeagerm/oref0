@@ -1,30 +1,139 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# add crontab entries
-grep -q networklog ~/.bash_profile 2>/dev/null || echo "alias networklog="'"tail -n 100 -F /var/log/openaps/network.log"' >> ~/.bash_profile
-grep -q xdrip-looplog ~/.bash_profile || echo "alias xdrip-looplog="'"tail -n 100 -F /var/log/openaps/xdrip-loop.log"' >> ~/.bash_profile
-grep -q cgm-looplog ~/.bash_profile || echo "alias cgm-looplog="'"tail -n 100 -F /var/log/openaps/cgm-loop.log"' >> ~/.bash_profile
-grep -q autosens-looplog ~/.bash_profile || echo "alias autosens-looplog="'"tail -n 100 -F /var/log/openaps/autosens-loop.log"' >> ~/.bash_profile
-grep -q autotunelog ~/.bash_profile || echo "alias autotunelog="'"tail -n 100 -F /var/log/openaps/autotune.log"' >> ~/.bash_profile
-grep -q pump-looplog ~/.bash_profile || echo "alias pump-looplog="'"tail -n 100 -F /var/log/openaps/pump-loop.log"' >> ~/.bash_profile
-grep -q urchin-looplog ~/.bash_profile || echo "alias urchin-looplog="'"tail -n 100 -F /var/log/openaps/urchin-loop.log"' >> ~/.bash_profile
-grep -q ns-looplog ~/.bash_profile || echo "alias ns-looplog="'"tail -n 100 -F /var/log/openaps/ns-loop.log"' >> ~/.bash_profile
-grep -q cat-pref ~/.bash_profile || echo "alias cat-pref="'"cd ~/myopenaps && cat preferences.json"' >> ~/.bash_profile
-grep -q edit-pref ~/.bash_profile || echo "alias edit-pref="'"cd ~/myopenaps && nano preferences.json"' >> ~/.bash_profile
-grep -q cat-wifi ~/.bash_profile || echo "alias cat-wifi="'"cat /etc/wpa_supplicant/wpa_supplicant.conf"' >> ~/.bash_profile
-grep -q edit-wifi ~/.bash_profile || echo "alias edit-wifi="'"nano /etc/wpa_supplicant/wpa_supplicant.conf"' >> ~/.bash_profile
-grep -q cat-runagain ~/.bash_profile || echo "alias cat-runagain="'"cd ~/myopenaps && cat oref0-runagain.sh"' >> ~/.bash_profile
-grep -q edit-runagain ~/.bash_profile || echo "alias edit-runagain="'"cd ~/myopenaps && nano oref0-runagain.sh"' >> ~/.bash_profile
-grep -q cat-autotune ~/.bash_profile || echo "alias cat-autotune="'"cd ~/myopenaps/autotune && cat autotune_recommendations.log"' >> ~/.bash_profile
-grep -q git-branch ~/.bash_profile || echo "alias git-branch="'"cd ~/src/oref0 && git branch"' >> ~/.bash_profile
-grep -q runagain ~/.bash_profile || echo "alias runagain="'"bash ~/myopenaps/oref0-runagain.sh"' >> ~/.bash_profile
-grep -q edison-battery ~/.bash_profile || echo "alias edison-battery="'"cd ~/myopenaps/monitor && cat edison-battery.json"' >> ~/.bash_profile
-grep -q cat-reservoir ~/.bash_profile || echo "alias cat-reservoir="'"cd ~/myopenaps/monitor && cat reservoir.json"' >> ~/.bash_profile
-grep -q stop-cron ~/.bash_profile || echo "alias stop-cron="'"cd ~/myopenaps && /etc/init.d/cron stop && killall -g oref0-pump-loop"' >> ~/.bash_profile
-grep -q start-cron ~/.bash_profile || echo "alias start-cron="'"/etc/init.d/cron start"' >> ~/.bash_profile
+# Because this script is meant to be "source"d, not just run normally, it
+# doesn't include oref0-bash-common-functions.sh like most others do.
 
-# source default /etc/profile as well
-grep -q /etc/skel/.profile ~/.bash_profile || echo ". /etc/skel/.profile" >> ~/.bash_profile
+myopenaps=${OPENAPS_DIR:-"$HOME/myopenaps"}
+self="${BASH_SOURCE[0]}"
 
-# to enable shortcut aliases in ~/.bash_profile
-source ~/.bash_profile
+function usage ()
+{
+    cat <<EOT
+Usage: $(basename "$self") --add-to-profile=/path/to/.bash_profile
+Usage: source "$(basename "$self")"
+
+Add aliases to .bash_profile or to the shell you source this from.
+If run with the --add-to-profile=path option, modifies the file at the given
+path (should be ~/.bash_profile) to include OpenAPS convenience aliases, if it
+doesn't already. If evaluated with "source", adds those aliases to the
+current shell environment instead.
+EOT
+}
+
+function do_aliases ()
+{
+    alias networklog="tail -n 100 -F /var/log/openaps/network.log"
+    alias xdrip-looplog="tail -n 100 -F /var/log/openaps/xdrip-loop.log"
+    alias cgm-looplog="tail -n 100 -F /var/log/openaps/cgm-loop.log"
+    alias autosens-looplog="tail -n 100 -F /var/log/openaps/autosens-loop.log"
+    alias autotunelog="tail -n 100 -F /var/log/openaps/autotune.log"
+    alias pump-looplog="tail -n 100 -F /var/log/openaps/pump-loop.log"
+    alias urchin-looplog="tail -n 100 -F /var/log/openaps/urchin-loop.log"
+    alias ns-looplog="tail -n 100 -F /var/log/openaps/ns-loop.log"
+    alias cat-pref="cd ${myopenaps} && cat preferences.json"
+    alias edit-pref="cd ${myopenaps} && nano preferences.json"
+    alias cat-wifi="cat /etc/wpa_supplicant/wpa_supplicant.conf"
+    alias edit-wifi="vi /etc/wpa_supplicant/wpa_supplicant.conf"
+    alias cat-runagain="cd ${myopenaps} && cat oref0-runagain.sh"
+    alias edit-runagain="cd ${myopenaps} && nano oref0-runagain.sh"
+    alias cat-autotune="cd ${myopenaps}/autotune && cat autotune_recommendations.log"
+    alias git-branch="cd $HOME/src/oref0 && git branch"
+    alias runagain="bash ${myopenaps}/oref0-runagain.sh"
+    alias edison-battery="cd=${myopenaps}/monitor && cat edison-battery.json"
+    alias cat-reservoir="cd ${myopenaps}/monitor && cat reservoir.json"
+    alias stop-cron="cd ${myopenaps} && /etc/init.d/cron stop && killall -g oref0-pump-loop"
+    alias start-cron="/etc/init.d/cron start"
+    alias tz="sudo dpkg-reconfigure tzdata"
+}
+
+function add_aliases_to_profile ()
+{
+    local PROFILE_PATH="$1"
+    
+    remove_obsolete_aliases "$PROFILE_PATH"
+    
+    local THIS_SCRIPT="$(readlink -f "$self")"
+    local SOURCE_THIS_SCRIPT="source \"$THIS_SCRIPT\""
+    if ! grep -q "$SOURCE_THIS_SCRIPT" "$PROFILE_PATH"; then
+        echo "$SOURCE_THIS_SCRIPT" >>"$PROFILE_PATH"
+    fi
+    
+    # source default /etc/profile as well
+    if ! grep -q /etc/skel/.profile "$PROFILE_PATH"; then
+        echo "source /etc/skel/.profile" >> "$PROFILE_PATH"
+    fi
+}
+
+# In versions prior to 0.7.0, we individually added a bunch of aliases to the
+# user's .bash_profile; in 0.7.0, we instead make the .bash_profile source a
+# file that includes those aliases. For upgrading purposes, we want to remove
+# aliases that exactly match the ones that earlier versions added, but not
+# aliases that have been modified.
+function remove_obsolete_aliases () {
+    local PROFILE_PATH="$1"
+    
+    # List of aliases that may have been added by previous versions of oref0.
+    # Some have multiple variants.
+    OBSOLETE_ALIASES=$(cat <<END
+        alias networklog="tail -n 100 -F /var/log/openaps/network.log"
+        alias xdrip-looplog="tail -n 100 -F /var/log/openaps/xdrip-loop.log"
+        alias cgm-looplog="tail -n 100 -F /var/log/openaps/cgm-loop.log"
+        alias autosens-looplog="tail -n 100 -F /var/log/openaps/autosens-loop.log"
+        alias autotunelog="tail -n 100 -F /var/log/openaps/autotune.log"
+        alias pump-looplog="tail -n 100 -F /var/log/openaps/pump-loop.log"
+        alias urchin-looplog="tail -n 100 -F /var/log/openaps/urchin-loop.log"
+        alias ns-looplog="tail -n 100 -F /var/log/openaps/ns-loop.log"
+        alias cat-pref="cd ${myopenaps} && cat preferences.json"
+        alias edit-pref="cd ${myopenaps} && nano preferences.json"
+        alias cat-wifi="cat /etc/wpa_supplicant/wpa_supplicant.conf"
+        alias edit-wifi="nano /etc/wpa_supplicant/wpa_supplicant.conf"
+        alias edit-wifi="vi /etc/wpa_supplicant/wpa_supplicant.conf"
+        alias cat-runagain="cd ${myopenaps} && cat oref0-runagain.sh"
+        alias edit-runagain="cd ${myopenaps} && nano oref0-runagain.sh"
+        alias cat-autotune="cd ${myopenaps}/autotune && cat autotune_recommendations.log"
+        alias git-branch="cd $HOME/src/oref0 && git branch"
+        alias runagain="bash ${myopenaps}/oref0-runagain.sh"
+        alias edison-battery="cd=${myopenaps}/monitor && cat edison-battery.json"
+        alias cat-reservoir="cd ${myopenaps}/monitor && cat reservoir.json"
+        alias stop-cron="cd ${myopenaps} && /etc/init.d/cron stop && killall -g oref0-pump-loop"
+        alias start-cron="/etc/init.d/cron start"
+END
+)
+    echo "$OBSOLETE_ALIASES" |(while read OBSOLETE_ALIAS; do
+        test -f "$PROFILE_PATH" && cat "$PROFILE_PATH" |grep -v "$OBSOLETE_ALIAS" >"$PROFILE_PATH".new$$ &&
+        mv -f "$PROFILE_PATH".new$$ "$PROFILE_PATH"
+    done)
+}
+
+case "$1" in
+    -h|--help|help)
+        usage
+        exit 0
+        ;;
+esac
+
+# Script was loaded with "source" (rather than regular execution)?
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    # Don't parse arguments, because the arguments in $@ belong to the parent
+    # script, not to us.
+    do_aliases
+else
+    if [[ $# == 0 ]]; then
+        usage
+        exit 0
+    fi
+    for i in "$@"; do
+    case "$i" in
+        --add-to-profile)
+            test -f "$HOME/.bash_profile" && add_aliases_to_profile "$HOME/.bash_profile"
+            ;;
+        --add-to-profile=*)
+            test -f "${i#*=}" && add_aliases_to_profile "${i#*=}"
+            ;;
+        *)
+           echo "Unrecognized argument: $i"
+           exit 1
+           ;;
+    esac
+    done
+fi
